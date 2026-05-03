@@ -39,8 +39,22 @@ export function CounterWidget() {
   const [error, setError] = React.useState<string | null>(null);
 
   // Initial load.
+  //
+  // On every page load / refresh / new tab, this `useEffect` fires once on
+  // mount and pulls the canonical counter value from `GET /api/counter`,
+  // which is backed by the persisted `counters` row in Postgres. This is
+  // the contract that guarantees the displayed value is sourced from the
+  // database — never from React state left over from a previous session
+  // or from a stale browser cache (we pass `cache: 'no-store'`). Until
+  // the fetch resolves, `value` is `null` and the render path below shows
+  // a Skeleton so users see an explicit loading state instead of a flash
+  // of an incorrect "0".
+  //
+  // We use an `AbortController` so that if the component unmounts mid-
+  // flight (e.g. fast navigation away), the underlying request is
+  // actually cancelled rather than just having its result ignored.
   React.useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
 
     async function load() {
       setLoading(true);
@@ -51,6 +65,7 @@ export function CounterWidget() {
           method: 'GET',
           headers: { Accept: 'application/json' },
           cache: 'no-store',
+          signal: controller.signal,
         });
 
         if (!res.ok) {
@@ -59,7 +74,7 @@ export function CounterWidget() {
 
         const data = (await res.json()) as CounterResponse;
 
-        if (cancelled) return;
+        if (controller.signal.aborted) return;
 
         if (typeof data?.value !== 'number') {
           throw new Error('Malformed response from /api/counter');
@@ -67,12 +82,13 @@ export function CounterWidget() {
 
         setValue(data.value);
       } catch (err) {
-        if (cancelled) return;
+        // Ignore abort errors triggered by unmount — they are expected.
+        if (controller.signal.aborted) return;
         const message =
           err instanceof Error ? err.message : 'Failed to load counter';
         setError(message);
       } finally {
-        if (!cancelled) {
+        if (!controller.signal.aborted) {
           setLoading(false);
         }
       }
@@ -81,7 +97,7 @@ export function CounterWidget() {
     void load();
 
     return () => {
-      cancelled = true;
+      controller.abort();
     };
   }, []);
 
@@ -170,15 +186,23 @@ export function CounterWidget() {
       className="flex w-full flex-col items-center justify-center gap-6"
     >
       <div
-        className="flex min-h-[6rem] w-full items-center justify-center"
+        className="flex min-h-[6rem] w-full flex-col items-center justify-center gap-2"
         aria-busy={showSkeleton || incrementPending || decrementPending}
       >
         {showSkeleton ? (
-          <Skeleton
-            data-testid="counter-widget-skeleton"
-            aria-label="Loading counter value"
-            className="h-24 w-40"
-          />
+          <>
+            <Skeleton
+              data-testid="counter-widget-skeleton"
+              aria-label="Loading counter value"
+              className="h-24 w-40"
+            />
+            <p
+              data-testid="counter-widget-loading-caption"
+              className="text-sm text-muted-foreground"
+            >
+              Loading counter…
+            </p>
+          </>
         ) : (
           <span
             data-testid="counter-widget-value"
