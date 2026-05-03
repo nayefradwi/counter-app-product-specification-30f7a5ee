@@ -153,10 +153,16 @@ export function CounterWidget() {
   }, [postMutation]);
 
   const showSkeleton = loading || value === null;
+  // While *any* mutation is in flight we disable *both* buttons to prevent
+  // double-submits (e.g. a user mashing "+" then "−" before the first POST
+  // resolves and racing two concurrent writes against the counter row).
+  // Each button still carries its own `aria-busy` so assistive tech can
+  // tell which action is actually pending.
+  const anyMutationPending = incrementPending || decrementPending;
   // Buttons are also disabled until the initial GET resolves, otherwise a
   // user could fire a mutation before we know the current value.
-  const incrementDisabled = showSkeleton || incrementPending;
-  const decrementDisabled = showSkeleton || decrementPending;
+  const incrementDisabled = showSkeleton || anyMutationPending;
+  const decrementDisabled = showSkeleton || anyMutationPending;
 
   return (
     <section
